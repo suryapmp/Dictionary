@@ -1,0 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Courier New", Courier, monospace;
+  --font-serif: "Georgia", serif;
+
+  --color-bg: #F8FAFC;
+  --color-ink: #0F172A;
+  --color-accent: #2563EB;
+  --color-line: #CBD5E1;
+  --color-header: #0F172A;
+  --color-sidebar: #FFFFFF;
+}
+
+@layer base {
+  body {
+    @apply bg-[var(--color-bg)] text-[var(--color-ink)] font-sans antialiased m-0 min-h-screen;
+  }
+}
+
+.layout-root {
+  @apply min-h-screen flex flex-col bg-[var(--color-bg)];
+}
+
+.header {
+  @apply bg-[var(--color-header)] text-white flex items-center justify-center px-6 py-4 border-b border-[var(--color-line)] sticky top-0 z-50 shadow-md;
+}
+
+.main-container {
+  @apply max-w-5xl mx-auto w-full flex-grow p-6 md:p-10;
+}
+
+.suggestion-box {
+  @apply absolute top-full left-0 right-0 bg-white border border-[var(--color-line)] shadow-xl z-50 rounded-b-md overflow-hidden;
+}
+
+.suggestion-item {
+  @apply px-4 py-3 cursor-pointer hover:bg-slate-50 border-b border-slate-100 last:border-0 flex items-center gap-3 transition-colors;
+}
+
+.card {
+  @apply bg-white border border-[var(--color-line)] rounded-[4px] p-5 shadow-sm;
+}
+
+.label-micro {
+  @apply font-mono text-[10px] uppercase text-[#64748B] tracking-[0.05em] mb-1;
+}
+
+.term-title {
+  @apply text-[32px] font-bold mb-2 text-[var(--color-ink)] border-b-2 border-[var(--color-accent)] inline-block leading-tight;
+}
+
+.kannada-term {
+  @apply font-serif text-[28px] text-[var(--color-accent)] mt-3 leading-tight font-medium;
+}
+
+.definition-box {
+  @apply leading-relaxed text-sm;
+}
+
+.academic-pill {
+  @apply bg-[#EFF6FF] border border-[#BFDBFE] text-[#1E40AF] px-3 py-1 rounded-full text-xs font-semibold inline-block mr-2;
+}
+
+.history-item {
+  @apply p-3 px-4 border-b border-[var(--color-line)] cursor-pointer transition-colors hover:bg-[#F1F5F9];
+}
+
+.history-item.active {
+  @apply border-l-4 border-[var(--color-accent)] bg-[#F8FAFC];
+}
+
+.search-input {
+  @apply w-full bg-[#1E293B] border border-[#334155] text-white px-4 py-2 rounded-[4px] text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)];
+}
