@@ -91,20 +91,33 @@ export async function getSearchSuggestions(prefix: string): Promise<string[]> {
 }
 
 async function fetchFromOpenRouter(query: string): Promise<DictionaryResponse> {
-  if (!openai) throw new Error("OpenRouter Key Missing");
+  if (!openai) throw new Error("OpenRouter Key Missing (VITE_OPENROUTER_API_KEY)");
   
-  const response = await openai.chat.completions.create({
-    model: "google/gemma-2-9b-it:free",
-    messages: [
-      { role: "system", content: SYSTEM_INSTRUCTION + JSON_SCHEMA_PROMPT },
-      { role: "user", content: `Technical record for: "${query}"` }
-    ],
-    response_format: { type: "json_object" }
-  });
+  // Attempt with user-specified model first, fallback to standard free model
+  const models = ["google/gemma-2-9b-it:free", "google/gemma-2-27b-it:free", "meta-llama/llama-3-8b-instruct:free"];
+  
+  let lastError = null;
+  for (const model of models) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: model,
+        messages: [
+          { role: "system", content: SYSTEM_INSTRUCTION + JSON_SCHEMA_PROMPT },
+          { role: "user", content: `Technical record for: "${query}"` }
+        ],
+        response_format: { type: "json_object" }
+      });
 
-  const content = response.choices[0].message.content;
-  if (!content) throw new Error("Empty response from OpenRouter");
-  return JSON.parse(content) as DictionaryResponse;
+      const content = response.choices[0].message.content;
+      if (!content) continue;
+      return JSON.parse(content) as DictionaryResponse;
+    } catch (e: any) {
+      console.warn(`OpenRouter model ${model} failed:`, e?.message);
+      lastError = e;
+    }
+  }
+  
+  throw lastError || new Error("OpenRouter engines failed to return data");
 }
 
 async function fetchFromGemini(query: string): Promise<DictionaryResponse> {
@@ -151,14 +164,20 @@ export async function searchTechnicalTerm(query: string): Promise<DictionaryResp
   if (!navigator.onLine) {
     throw new Error("You are offline. Please reconnect.");
   }
+
+  const reports: string[] = [];
   
-  // PRIMARY: OpenRouter (Gemma 2)
+  // PRIMARY: OpenRouter (Multi-Model Strategy)
   if (openai) {
     try {
       return await fetchFromOpenRouter(query);
     } catch (error: any) {
-      console.warn("OpenRouter Primary failed, trying Gemini fallback...", error);
+      const msg = `OpenRouter Engine Unavailable: ${error?.message || "Unknown error"}`;
+      console.warn(msg);
+      reports.push(msg);
     }
+  } else {
+    reports.push("OpenRouter is not configured (VITE_OPENROUTER_API_KEY missing)");
   }
 
   // SECONDARY: Gemini
@@ -168,11 +187,16 @@ export async function searchTechnicalTerm(query: string): Promise<DictionaryResp
     } catch (error: any) {
       console.error("Gemini Fallback Error:", error);
       if (error?.message?.includes("quota")) {
-        throw new Error("All AI engines exhausted (Quota Exceeded). Please try again later.");
+        reports.push("Gemini Engine: Quota Exceeded");
+        const summary = reports.join(" | ");
+        throw new Error(`All AI engines exhausted. Status: ${summary}. Please verify your API Keys in Netlify settings.`);
       }
       throw error;
     }
+  } else {
+    reports.push("Gemini is not configured (VITE_GEMINI_API_KEY missing)");
   }
 
-  throw new Error("No AI Engines configured. Please set API keys.");
+  const finalStatus = reports.join(" | ");
+  throw new Error(`No AI Engines available. Diagnostics: ${finalStatus}`);
 }
