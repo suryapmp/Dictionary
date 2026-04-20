@@ -5,108 +5,174 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { DictionaryResponse } from "../types";
+import OpenAI from "openai";
 
-const getApiKey = () => {
-  return import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-};
+const getGeminiKey = () => import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+const getOpenRouterKey = () => import.meta.env.VITE_OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
 
-const apiKey = getApiKey();
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+const geminiKey = getGeminiKey();
+const openRouterKey = getOpenRouterKey();
+
+const ai = geminiKey ? new GoogleGenAI({ apiKey: geminiKey }) : null;
+const openai = openRouterKey ? new OpenAI({
+  apiKey: openRouterKey,
+  baseURL: "https://openrouter.ai/api/v1",
+  dangerouslyAllowBrowser: true,
+  defaultHeaders: {
+    "HTTP-Referer": window.location.origin,
+    "X-Title": "Technical Lexicon EN-KN",
+  }
+}) : null;
 
 const SYSTEM_INSTRUCTION = `You are a Fast Bilingual Technical Dictionary (EN-KN).
-1. Return strictly structured JSON.
-2. Content: Etymology, IPA, Definition (EN/KN), Synonyms, Antonyms, Related Terms, and Context.
-3. Be concise. Avoid filler words. Use formal Kannada.
-4. Extract core term from phrases like "what is...".
-5. For non-technical queries, return {"error": "Non-Technical"}.`;
+Return strictly valid JSON.
+Fields: english_term, kannada_term, kannada_phonetic, kannada_ipa, etymology, technical_definition (object {english, kannada}), synonyms (array), antonyms (array), related_terms (array), context_use.
+Be concise. Avoid filler words. Use formal Kannada.
+Case: For non-technical queries, return {"error": "Non-Technical"}.`;
+
+const JSON_SCHEMA_PROMPT = `
+Output format must be JSON:
+{
+  "english_term": "string",
+  "kannada_term": "string",
+  "kannada_phonetic": "string",
+  "kannada_ipa": "string",
+  "etymology": "string",
+  "technical_definition": { "english": "string", "kannada": "string" },
+  "synonyms": ["string"],
+  "antonyms": ["string"],
+  "related_terms": ["string"],
+  "context_use": "string"
+}
+`;
 
 export async function getSearchSuggestions(prefix: string): Promise<string[]> {
-  if (!prefix.trim() || !ai) return [];
+  if (!prefix.trim()) return [];
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Provide 4 technical terms starting with: "${prefix}". Return JSON string array only.`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
+  // Try OpenRouter First
+  if (openai) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: "google/gemma-2-9b-it:free",
+        messages: [{ role: "user", content: `List 4 technical terms starting with "${prefix}". Return JSON string array only.` }],
+        response_format: { type: "json_object" }
+      });
+      const content = response.choices[0].message.content;
+      if (content) {
+        const data = JSON.parse(content);
+        return Array.isArray(data) ? data : data.suggestions || Object.values(data)[0];
+      }
+    } catch (e) {
+      console.warn("OpenRouter Suggestions Failed, falling back to Gemini", e);
+    }
+  }
+
+  // Fallback to Gemini
+  if (ai) {
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Provide 4 technical terms starting with: "${prefix}". Return JSON string array only.`,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          }
+        }
+      });
+      return JSON.parse(response.text || "[]");
+    } catch (error) {
+      console.error("Gemini Suggestions Error:", error);
+    }
+  }
+
+  return [];
+}
+
+async function fetchFromOpenRouter(query: string): Promise<DictionaryResponse> {
+  if (!openai) throw new Error("OpenRouter Key Missing");
+  
+  const response = await openai.chat.completions.create({
+    model: "google/gemma-2-9b-it:free",
+    messages: [
+      { role: "system", content: SYSTEM_INSTRUCTION + JSON_SCHEMA_PROMPT },
+      { role: "user", content: `Technical record for: "${query}"` }
+    ],
+    response_format: { type: "json_object" }
+  });
+
+  const content = response.choices[0].message.content;
+  if (!content) throw new Error("Empty response from OpenRouter");
+  return JSON.parse(content) as DictionaryResponse;
+}
+
+async function fetchFromGemini(query: string): Promise<DictionaryResponse> {
+  if (!ai) throw new Error("Gemini Key Missing");
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Identify core technical term and provide scholarly record for: "${query}"`,
+    config: {
+      systemInstruction: SYSTEM_INSTRUCTION,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          english_term: { type: Type.STRING },
+          kannada_term: { type: Type.STRING },
+          kannada_phonetic: { type: Type.STRING },
+          kannada_ipa: { type: Type.STRING },
+          etymology: { type: Type.STRING },
+          technical_definition: {
+            type: Type.OBJECT,
+            properties: {
+              english: { type: Type.STRING },
+              kannada: { type: Type.STRING }
+            },
+            required: ["english", "kannada"]
+          },
+          synonyms: { type: Type.ARRAY, items: { type: Type.STRING } },
+          antonyms: { type: Type.ARRAY, items: { type: Type.STRING } },
+          related_terms: { type: Type.ARRAY, items: { type: Type.STRING } },
+          context_use: { type: Type.STRING },
+          error: { type: Type.STRING }
         }
       }
-    });
+    }
+  });
 
-    const text = response.text?.trim();
-    if (!text) return [];
-    return JSON.parse(text);
-  } catch (error) {
-    console.error("Suggestions Error:", error);
-    return [];
-  }
+  const text = response.text?.trim();
+  if (!text) throw new Error("Empty response from Gemini");
+  return JSON.parse(text) as DictionaryResponse;
 }
 
 export async function searchTechnicalTerm(query: string): Promise<DictionaryResponse> {
   if (!navigator.onLine) {
-    throw new Error("You are offline. Please reconnect to access the AI Indexing Engine.");
+    throw new Error("You are offline. Please reconnect.");
   }
   
-  if (!ai) {
-    throw new Error("Missing Gemini API Key. Ensure VITE_GEMINI_API_KEY is set in Netlify or GEMINI_API_KEY is in the AI Studio Secrets panel.");
+  // PRIMARY: OpenRouter (Gemma 2)
+  if (openai) {
+    try {
+      return await fetchFromOpenRouter(query);
+    } catch (error: any) {
+      console.warn("OpenRouter Primary failed, trying Gemini fallback...", error);
+    }
   }
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Identify the core technical term in the following user request and provide its scholarly technical record. User request: "${query}"`,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            english_term: { type: Type.STRING },
-            kannada_term: { type: Type.STRING },
-            kannada_phonetic: { type: Type.STRING },
-            kannada_ipa: { type: Type.STRING },
-            etymology: { type: Type.STRING },
-            technical_definition: {
-              type: Type.OBJECT,
-              properties: {
-                english: { type: Type.STRING },
-                kannada: { type: Type.STRING }
-              },
-              required: ["english", "kannada"]
-            },
-            synonyms: { type: Type.ARRAY, items: { type: Type.STRING } },
-            antonyms: { type: Type.ARRAY, items: { type: Type.STRING } },
-            related_terms: { type: Type.ARRAY, items: { type: Type.STRING } },
-            context_use: { type: Type.STRING },
-            error: { type: Type.STRING }
-          }
-        }
+  // SECONDARY: Gemini
+  if (ai) {
+    try {
+      return await fetchFromGemini(query);
+    } catch (error: any) {
+      console.error("Gemini Fallback Error:", error);
+      if (error?.message?.includes("quota")) {
+        throw new Error("All AI engines exhausted (Quota Exceeded). Please try again later.");
       }
-    });
-
-    const text = response.text?.trim();
-    if (!text) {
-      throw new Error("The AI Engine returned an empty response. Please try again or use a different term.");
+      throw error;
     }
-
-    const result = JSON.parse(text);
-    return result as DictionaryResponse;
-  } catch (error: any) {
-    console.error("Gemini Search Error:", error);
-    
-    // Check for specific error types
-    if (error?.message?.includes("API_KEY_INVALID")) {
-      throw new Error("Invalid API Key. Please check your Gemini API key in the Secrets panel.");
-    }
-    
-    if (error?.message?.includes("quota")) {
-      throw new Error("API Quota exceeded. Please try again in a few minutes.");
-    }
-
-    const message = error?.message || "Connectivity error: Failed to reach the dictionary indexing engine.";
-    throw new Error(message);
   }
+
+  throw new Error("No AI Engines configured. Please set API keys.");
 }
