@@ -51,19 +51,22 @@ export async function getSearchSuggestions(prefix: string): Promise<string[]> {
 
   // Try OpenRouter First
   if (openai) {
-    try {
-      const response = await openai.chat.completions.create({
-        model: "google/gemma-2-9b-it:free",
-        messages: [{ role: "user", content: `List 4 technical terms starting with "${prefix}". Return JSON string array only.` }],
-        response_format: { type: "json_object" }
-      });
-      const content = response.choices[0].message.content;
-      if (content) {
-        const data = JSON.parse(content);
-        return Array.isArray(data) ? data : data.suggestions || Object.values(data)[0];
+    const models = ["google/gemma-2-9b-it:free", "qwen/qwen-2.5-7b-instruct:free"];
+    for (const model of models) {
+      try {
+        const response = await openai.chat.completions.create({
+          model: model,
+          messages: [{ role: "user", content: `List 4 technical terms starting with "${prefix}". Return JSON string array only.` }],
+          response_format: { type: "json_object" }
+        });
+        const content = response.choices[0].message.content;
+        if (content) {
+          const data = JSON.parse(content);
+          return Array.isArray(data) ? data : data.suggestions || Object.values(data)[0];
+        }
+      } catch (e) {
+        console.warn(`OpenRouter Suggestions (${model}) Failed`, e);
       }
-    } catch (e) {
-      console.warn("OpenRouter Suggestions Failed, falling back to Gemini", e);
     }
   }
 
@@ -93,8 +96,14 @@ export async function getSearchSuggestions(prefix: string): Promise<string[]> {
 async function fetchFromOpenRouter(query: string): Promise<DictionaryResponse> {
   if (!openai) throw new Error("OpenRouter Key Missing (VITE_OPENROUTER_API_KEY)");
   
-  // Attempt with user-specified model first, fallback to standard free model
-  const models = ["google/gemma-2-9b-it:free", "google/gemma-2-27b-it:free", "meta-llama/llama-3-8b-instruct:free"];
+  // Attempt with correct free model IDs
+  const models = [
+    "google/gemma-2-9b-it:free",
+    "qwen/qwen-2.5-7b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "mistralai/pixtral-12b:free",
+    "mistralai/mistral-7b-instruct:free"
+  ];
   
   let lastError = null;
   for (const model of models) {
@@ -113,6 +122,11 @@ async function fetchFromOpenRouter(query: string): Promise<DictionaryResponse> {
       return JSON.parse(content) as DictionaryResponse;
     } catch (e: any) {
       console.warn(`OpenRouter model ${model} failed:`, e?.message);
+      // If it's a 404, we know that model is invalid, we continue
+      // If it's a 401/403, it's a key issue
+      if (e?.status === 401 || e?.status === 403) {
+        throw new Error(`OpenRouter Authentication Failed: ${e?.message}`);
+      }
       lastError = e;
     }
   }
