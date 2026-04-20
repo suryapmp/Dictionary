@@ -5,6 +5,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { DictionaryResponse } from "../types";
+import { db } from "./db";
 
 const getGeminiKey = () => import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 const getOpenRouterKey = () => import.meta.env.VITE_OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
@@ -14,11 +15,12 @@ const ai = geminiKey ? new GoogleGenAI({ apiKey: geminiKey }) : null;
 
 // DEFINITIVE LIST OF STABLE FREE MODELS ON OPENROUTER (April 2026)
 const MODELS = [
-  "google/gemma-2-9b-it:free",
   "mistralai/mistral-7b-instruct:free",
   "qwen/qwen-2-7b-instruct:free",
-  "microsoft/phi-3-medium-128k-instruct:free",
-  "meta-llama/llama-3.1-8b-instruct:free"
+  "microsoft/phi-3-mini-128k-instruct:free",
+  "meta-llama/llama-3.1-8b-instruct:free",
+  "google/gemma-7b-it:free",
+  "huggingfaceh4/zephyr-7b-beta:free"
 ];
 
 const SYSTEM_INSTRUCTION = `You are a Fast Bilingual Technical Dictionary (EN-KN).
@@ -50,10 +52,31 @@ function extractJson(text: string) {
     if (match && match[1]) {
       try { return JSON.parse(match[1]); } catch { /* ignore */ }
     }
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start !== -1 && end !== -1) {
-      return JSON.parse(text.substring(start, end + 1));
+
+    // Identify indices for both objects and arrays
+    const firstBrace = text.indexOf('{');
+    const firstBracket = text.indexOf('[');
+    const lastBrace = text.lastIndexOf('}');
+    const lastBracket = text.lastIndexOf(']');
+
+    let start = -1;
+    let end = -1;
+
+    // Favor whichever structure starts first
+    if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+      start = firstBrace;
+      end = lastBrace;
+    } else if (firstBracket !== -1) {
+      start = firstBracket;
+      end = lastBracket;
+    }
+
+    if (start !== -1 && end !== -1 && end > start) {
+      try {
+        return JSON.parse(text.substring(start, end + 1));
+      } catch {
+        /* fallback to throw */
+      }
     }
     throw new Error("Could not parse AI response as JSON");
   }
@@ -126,17 +149,39 @@ async function fetchFromGemini(query: string): Promise<DictionaryResponse> {
 export async function getSearchSuggestions(prefix: string): Promise<string[]> {
   if (!prefix.trim()) return [];
 
+  // Try local cache first for prefix matching
+  const cachedTerms = await db.terms
+    .where('query')
+    .startsWith(prefix.toLowerCase())
+    .limit(4)
+    .toArray();
+  
+  if (cachedTerms.length > 0) {
+    return cachedTerms.map(t => t.english_term);
+  }
+
   const key = getOpenRouterKey();
   if (key) {
-    for (const model of MODELS.slice(0, 2)) {
+    // Try all models for better redundancy on free tier
+    for (const model of MODELS) {
       try {
         const content = await callOpenRouter(model, [
-          { role: "user", content: `List 4 technical terms starting with "${prefix}". Return JSON string array only.` }
+          { role: "user", content: `List 4 technical terms starting with the prefix "${prefix}". Return JSON string array only. No markdown.` }
         ]);
         const data = extractJson(content);
-        return Array.isArray(data) ? data : data.suggestions || Object.values(data)[0];
-      } catch { continue; }
+        if (Array.isArray(data)) return data;
+        if (data.suggestions && Array.isArray(data.suggestions)) return data.suggestions;
+        if (typeof data === 'object') {
+          const values = Object.values(data).find(v => Array.isArray(v));
+          if (values) return values as string[];
+        }
+      } catch (e: any) {
+        console.warn(`[SUGGEST] ${model} failed: ${e.message}`);
+        continue;
+      }
     }
+  } else {
+    console.warn("[SUGGEST] OpenRouter Key missing, skipping to Gemini");
   }
 
   if (ai) {
@@ -154,7 +199,20 @@ export async function getSearchSuggestions(prefix: string): Promise<string[]> {
 }
 
 export async function searchTechnicalTerm(query: string): Promise<DictionaryResponse> {
-  if (!navigator.onLine) throw new Error("Offline");
+  const normalizedQuery = query.toLowerCase().trim();
+  
+  // 0. Try local cache first
+  try {
+    const cached = await db.terms.get(normalizedQuery);
+    if (cached) {
+      console.log(`[ENGINE] Loaded "${normalizedQuery}" from offline cache`);
+      return { ...cached, _offline: true } as any;
+    }
+  } catch (dbError) {
+    console.warn("Cache lookup failed:", dbError);
+  }
+
+  if (!navigator.onLine) throw new Error("Offline and term not in cache.");
 
   const reports: string[] = [];
 
@@ -169,7 +227,18 @@ export async function searchTechnicalTerm(query: string): Promise<DictionaryResp
           { role: "user", content: `Technical record for: "${query}"` }
         ]);
         console.log(`[ENGINE] Success with ${model}`);
-        return extractJson(content) as DictionaryResponse;
+        const result = extractJson(content) as DictionaryResponse;
+        
+        // Save to cache for offline use
+        if (result && !('error' in result)) {
+          db.terms.put({
+            ...result,
+            query: normalizedQuery,
+            cachedAt: Date.now()
+          }).catch(e => console.warn("Failed to cache:", e));
+        }
+        
+        return result;
       } catch (e: any) {
         console.warn(`[ENGINE] ${model} failed:`, e.message);
         reports.push(`${model}: ${e.message}`);
@@ -182,7 +251,18 @@ export async function searchTechnicalTerm(query: string): Promise<DictionaryResp
   if (ai) {
     try {
       console.log("[ENGINE] Falling back to Gemini...");
-      return await fetchFromGemini(query);
+      const result = await fetchFromGemini(query);
+      
+      // Save to cache for offline use
+      if (result && !('error' in result)) {
+        db.terms.put({
+          ...result,
+          query: normalizedQuery,
+          cachedAt: Date.now()
+        }).catch(e => console.warn("Failed to cache:", e));
+      }
+
+      return result;
     } catch (e: any) {
       reports.push(`Gemini: ${e.message}`);
     }

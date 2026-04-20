@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+        includeAssets: [],
         manifest: {
           name: 'Technical Lexicon',
           short_name: 'Lexicon',
@@ -22,7 +22,12 @@ export default defineConfig(({ mode }) => {
           display: 'standalone',
           icons: [
             {
-              src: 'https://cdn.pixabay.com/photo/2016/09/16/09/21/dictionary-1673539_1280.png',
+              src: 'https://cdn.pixabay.com/photo/2012/04/13/13/21/book-32367_1280.png',
+              sizes: '192x192',
+              type: 'image/png'
+            },
+            {
+              src: 'https://cdn.pixabay.com/photo/2012/04/13/13/21/book-32367_1280.png',
               sizes: '512x512',
               type: 'image/png'
             }
@@ -32,6 +37,7 @@ export default defineConfig(({ mode }) => {
     ],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      'process.env.OPENROUTER_API_KEY': JSON.stringify(env.VITE_OPENROUTER_API_KEY || env.OPENROUTER_API_KEY),
     },
     resolve: {
       alias: {

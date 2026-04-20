@@ -52,7 +52,7 @@ export default function App() {
   // Auto-suggestions logic
   useEffect(() => {
     const handler = setTimeout(async () => {
-      if (query.trim().length > 1) {
+      if (query.trim().length > 0) {
         setSuggestionsLoading(true);
         const results = await getSearchSuggestions(query);
         setSuggestions(results);
@@ -60,7 +60,7 @@ export default function App() {
       } else {
         setSuggestions([]);
       }
-    }, 600); // Increased debounce to 600ms for better performance
+    }, 400); // Reduced debounce to 400ms for snappier feedback
 
     return () => clearTimeout(handler);
   }, [query]);
@@ -130,16 +130,15 @@ export default function App() {
 
   return (
     <div className="layout-root">
-      {/* OFFLINE INDICATOR */}
-      <AnimatePresence>
+        <AnimatePresence>
         {!isOnline && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="bg-red-600 text-white text-[10px] uppercase tracking-widest font-bold py-1 text-center sticky top-0 z-[60] overflow-hidden"
+            className="bg-red-600 text-white text-[10px] uppercase tracking-widest font-bold py-1.5 text-center sticky top-0 z-[60] shadow-lg"
           >
-            Offline Mode • Limited Access
+            Offline Mode • Searching Cached Library Only
           </motion.div>
         )}
       </AnimatePresence>
@@ -305,7 +304,14 @@ export default function App() {
             {/* RECORD DETAILS */}
             <div className="space-y-8">
               <div className="border-b-4 border-slate-900 pb-6">
-                <div className="label-micro text-blue-600 font-bold">Dictionary Record</div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="label-micro text-blue-600 font-bold mb-0">Dictionary Record</div>
+                  {(entry as any)._offline && (
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black uppercase rounded tracking-tighter border border-amber-200">
+                      Offline Cache
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-col gap-4">
                   <div className="flex flex-wrap items-center gap-4">
                     <h2 className="text-3xl md:text-5xl font-black uppercase tracking-tighter text-slate-900 leading-none">{entry.english_term}</h2>
