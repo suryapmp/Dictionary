@@ -46,6 +46,10 @@ export async function getSearchSuggestions(prefix: string): Promise<string[]> {
 }
 
 export async function searchTechnicalTerm(query: string): Promise<DictionaryResponse> {
+  if (!navigator.onLine) {
+    throw new Error("You are offline. Please reconnect to access the AI Indexing Engine.");
+  }
+  
   if (!ai) {
     throw new Error("Missing Gemini API Key. Ensure VITE_GEMINI_API_KEY is set in Netlify or GEMINI_API_KEY is in the AI Studio Secrets panel.");
   }

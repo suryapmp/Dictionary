@@ -17,7 +17,20 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  // Monitor online status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -117,6 +130,20 @@ export default function App() {
 
   return (
     <div className="layout-root">
+      {/* OFFLINE INDICATOR */}
+      <AnimatePresence>
+        {!isOnline && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-red-600 text-white text-[10px] uppercase tracking-widest font-bold py-1 text-center sticky top-0 z-[60] overflow-hidden"
+          >
+            Offline Mode • Limited Access
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* PROFESSIONAL HEADER */}
       <header className="header flex-col gap-4">
         <div className="flex items-center gap-3">
